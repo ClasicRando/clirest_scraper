@@ -2,6 +2,7 @@ import asyncio
 import os
 import traceback
 import sys
+import time
 from metadata import RestMetadata
 from scraping import fetch_query
 from csv import reader, writer, QUOTE_MINIMAL
@@ -15,6 +16,7 @@ async def main(args: Namespace):
     if proceed == "N":
         proceed = input("Proceed with scrape? (y/n)").upper()
     if proceed == "Y":
+        start = time.time()
         tasks = (fetch_query(query, metadata) for query in metadata.queries)
         with open(f"{metadata.name}.csv", encoding="utf8", mode="w", newline="") as output_file:
             csv_writer = writer(output_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
@@ -32,6 +34,7 @@ async def main(args: Namespace):
                         )
                     )
                 os.remove(result.name)
+        print(f"Scraping took {time.time() - start} seconds")
 
 if __name__ == "__main__":
     if sys.platform in ("win32", "cygwin"):
