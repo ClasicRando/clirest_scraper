@@ -1,4 +1,7 @@
 import asyncio
+import os
+import traceback
+
 from metadata import RestMetadata
 from scraping import fetch_query
 import sys
@@ -13,11 +16,14 @@ async def main():
     print(metadata.json_text)
     if input("Proceed with scrape? (y/n)").upper() == "Y":
         tasks = (fetch_query(query, metadata) for query in metadata.queries)
-        with open(f"{metadata.name}.csv", newline="") as output_file:
-            csv_writer = writer(output_file, delimter=",", quotechar='"', quoting=QUOTE_MINIMAL)
+        with open(f"{metadata.name}.csv", encoding="utf8", mode="w", newline="") as output_file:
+            csv_writer = writer(output_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
             csv_writer.writerow(metadata.fields)
-            for file in await asyncio.gather(*tasks):
-                with open(file, newline="") as csv_file:
+            for result in await asyncio.gather(*tasks):
+                if isinstance(result, BaseException):
+                    traceback.print_exc()
+                    continue
+                with open(result.name, newline="", encoding="utf8") as csv_file:
                     csv_writer.writerows(
                         reader(
                             csv_file,
@@ -25,6 +31,7 @@ async def main():
                             quotechar='"'
                         )
                     )
+                os.remove(result.name)
 
 if __name__ == "__main__":
     if sys.platform in ("win32", "cygwin"):
