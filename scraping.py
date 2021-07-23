@@ -1,12 +1,11 @@
 import os
-import traceback
 from asyncio import sleep
 from functools import partial
 from tempfile import NamedTemporaryFile
 from numpy import format_float_positional
-from typing import Any, List, Optional
+from typing import Any, List
 from json import dumps
-from aiohttp import ClientSession, ClientConnectorError
+from aiohttp import ClientSession, ClientConnectorError, ClientError
 from metadata import RestMetadata
 from csv import writer, QUOTE_MINIMAL
 
@@ -80,7 +79,7 @@ def handle_record(geo_type: str, feature: dict) -> List[str]:
 
 async def fetch_query(query: str,
                       rest_metadata: RestMetadata,
-                      max_tries: int = 10) -> Optional[NamedTemporaryFile]:
+                      max_tries: int = 10) -> NamedTemporaryFile:
     temp_file = NamedTemporaryFile(
         mode="w",
         encoding="utf8",
@@ -127,11 +126,10 @@ async def fetch_query(query: str,
                 json_response["features"]
             )
             # Create Dataframe using records and fields
-            with open(temp_file.name, newline="") as csv_file:
+            with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
                 csv_writer = writer(csv_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
                 csv_writer.writerows(data)
-        except:
-            print(traceback.format_exc())
+        except ClientError as ex:
             os.remove(temp_file.name)
-            return
+            raise ex
         return temp_file
