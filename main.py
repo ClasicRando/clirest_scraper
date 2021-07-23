@@ -1,10 +1,9 @@
 import asyncio
 import os
 import traceback
-
+import sys
 from metadata import RestMetadata
 from scraping import fetch_query
-import sys
 from csv import reader, writer, QUOTE_MINIMAL
 
 
