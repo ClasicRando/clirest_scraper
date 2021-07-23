@@ -87,7 +87,7 @@ class RestMetadata:
             async with session.get(url + count_query) as response:
                 if response.status == 200:
                     json = await response.json()
-                    source_count = json["count"]
+                    source_count = json.get("count", -1)
 
             async with session.get(url + field_query) as response:
                 if response.status == 200:
