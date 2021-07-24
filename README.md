@@ -15,7 +15,7 @@ party package I used is aiohttp which can be installed using pip:
 After that the project should run for your python environment.
 
 <h3>App Run</h3>
-PyQt5 is a nice framework, but I who doesn't love a CLI application. I wanted to find a better way to make the
+PyQt5 is a nice framework, but who doesn't love a CLI application. I wanted to find a better way to make the
 application easier to run and require less third party libraries.
 
 From the command line and using the python command you can call the script which accepts 2 parameters:
