@@ -78,7 +78,7 @@ def handle_record(geo_type: str, feature: dict) -> List[str]:
 
 async def fetch_query(query: str,
                       rest_metadata: RestMetadata,
-                      max_tries: int = 10) -> NamedTemporaryFile:
+                      max_tries: int) -> NamedTemporaryFile:
     temp_file = NamedTemporaryFile(
         mode="w",
         encoding="utf8",

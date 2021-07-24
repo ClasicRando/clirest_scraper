@@ -17,7 +17,7 @@ async def main(args: Namespace):
         proceed = input("Proceed with scrape? (y/n)").upper()
     if proceed == "Y":
         start = time.time()
-        tasks = (fetch_query(query, metadata) for query in metadata.queries)
+        tasks = (fetch_query(query, metadata, args.tries) for query in metadata.queries)
         with open(f"{metadata.name}.csv", encoding="utf8", mode="w", newline="") as output_file:
             csv_writer = writer(output_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
             csv_writer.writerow(metadata.fields)
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument(
         "--url",
+        "-u",
         help="base url of the arcgis rest service",
         required=True
     )
@@ -52,5 +53,12 @@ if __name__ == "__main__":
         default="N",
         required=False,
         nargs="?"
+    )
+    parser.add_argument(
+        "--tries",
+        "-t",
+        help="max number of tries for a scraping query before operation is cancelled",
+        default=10,
+        required=False
     )
     asyncio.run(main(parser.parse_args()))
