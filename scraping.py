@@ -1,6 +1,5 @@
 import os
 from asyncio import sleep
-from functools import partial
 from tempfile import NamedTemporaryFile
 from numpy import format_float_positional
 from typing import Any, List
@@ -120,15 +119,15 @@ async def fetch_query(query: str,
                 if try_number > max_tries:
                     raise Exception(f"Too many tries to fetch query ({query})")
 
-            # Once query is successful, Map features from response using handle_record and geo_type
-            data = map(
-                partial(handle_record, rest_metadata.geo_type),
-                json_response["features"]
-            )
-            # Create Dataframe using records and fields
+            # write all rows to temp csv file using a mapping generator
             with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
                 csv_writer = writer(csv_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
-                csv_writer.writerows(data)
+                csv_writer.writerows(
+                    (
+                        handle_record(rest_metadata.geo_type, feature)
+                        for feature in json_response["features"]
+                    )
+                )
         except ClientError as ex:
             os.remove(temp_file.name)
             raise ex
