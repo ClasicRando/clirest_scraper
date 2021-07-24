@@ -20,7 +20,7 @@ application easier to run and require less third party libraries.
 
 From the command line and using the python command you can call the script which accepts 2 parameters:
 
-- `-- url base url of the rest service (string)`
+- `--url base url of the rest service (string)`
 - `--yes (or -y) no value needed and auto accepts scrape start after metadata is obtained`
 
 <h3>Notes</h3>
