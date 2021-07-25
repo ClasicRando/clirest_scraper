@@ -34,7 +34,7 @@ async def main(args: Namespace):
                         )
                     )
                 os.remove(result.name)
-        print(f"Scraping took {time.time() - start} seconds")
+        print(f"Scraping done. Took {time.time() - start} seconds")
 
 if __name__ == "__main__":
     if sys.platform in ("win32", "cygwin"):
