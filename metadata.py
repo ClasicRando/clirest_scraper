@@ -129,6 +129,14 @@ class RestMetadata:
                     max_min_oid = (attributes["MAX_VALUE"], attributes["MIN_VALUE"])
                     diff = max_min_oid[0] - max_min_oid[1] + 1
                     inc_oid = diff == source_count
+        elif oid_field:
+            async with session.get(url + max_min_query(oid_field)) as response:
+                if response.status == 200:
+                    json = await response.json()
+                    oid_values = json["objectIds"]
+                    max_min_oid = (max(oid_values), min(oid_values))
+                    diff = max_min_oid[0] - max_min_oid[1] + 1
+                    inc_oid = diff == source_count
         return RestMetadata(
             url,
             name,
@@ -211,7 +219,7 @@ class RestMetadata:
                 self.url + self.get_pagination_query(i)
                 for i in range(self.pagination_query_count)
             ]
-        elif self.oid_field and self.stats:
+        elif self.oid_field:
             return [
                 self.url + self.get_oid_query(
                     self.max_min_oid[1] + (i * self.scrape_count)
