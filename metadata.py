@@ -130,7 +130,12 @@ class RestMetadata:
                         diff = max_min_oid[0] - max_min_oid[1] + 1
                         inc_oid = diff == source_count
             elif not pagination and not stats and oid_field:
-                async with session.get(url + "/query?where=1%3D1&returnIdsOnly=true&f=json", ssl=False) as response:
+                params = {
+                    "where": "1=1",
+                    "returnIdsOnly": True,
+                    "f": "json",
+                }
+                async with session.get(url + "/query", params=params, ssl=False) as response:
                     if response.status == 200:
                         json = await response.json(content_type=response.content_type)
                         oid_values = json["objectIds"]
@@ -228,12 +233,16 @@ class RestMetadata:
             return []
 
     def get_pagination_query(self, query_num: int) -> str:
-        """ Generate query for service when pagination is supported using query_num to get offset """
+        """
+        Generate query for service when pagination is supported using query_num to get offset
+        """
         return f"/query?where=1+%3D+1&resultOffset={query_num * self.scrape_count}" \
                f"&resultRecordCount={self.scrape_count}{self.geo_text}&outFields=*&f=json"
 
     def get_oid_query(self, min_oid: int) -> str:
-        """ Generate query for service when Oid is available using a starting Oid number and an offset """
+        """
+        Generate query for service when Oid is available using a starting Oid number and an offset
+        """
         return f"/query?where={self.oid_field}+>%3D+{min_oid}+and+" \
                f"{self.oid_field}+<%3D+{min_oid + self.scrape_count - 1}" \
                f"{self.geo_text}&outFields=*&f=json"
