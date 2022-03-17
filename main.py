@@ -7,7 +7,7 @@ from metadata import RestMetadata
 from scraping import fetch_query
 from csv import reader, writer, QUOTE_MINIMAL
 from argparse import ArgumentParser, Namespace
-from progress import print_progress_bar
+from tqdm import tqdm
 
 
 async def fetch_worker(queue, done_queue):
@@ -24,6 +24,7 @@ async def csv_writer_worker(queue, metadata):
         csv_writer.writerow(metadata.fields)
         results_handled = 0
         total_results = len(metadata.queries)
+        t = tqdm(total=total_results)
         while True:
             result = await queue.get()
             if isinstance(result, BaseException):
@@ -40,13 +41,7 @@ async def csv_writer_worker(queue, metadata):
             os.remove(result.name)
             results_handled += 1
             queue.task_done()
-            print_progress_bar(
-                iteration=results_handled,
-                total=total_results,
-                prefix="Progress",
-                suffix="Complete",
-                length=50,
-            )
+            t.update(1)
 
 
 async def main(args: Namespace):
