@@ -5,7 +5,6 @@ from numpy import format_float_positional
 from typing import Any, List
 from json import dumps
 from aiohttp import ClientSession, ClientConnectorError, ClientError
-from metadata import RestMetadata
 from csv import writer, QUOTE_MINIMAL
 
 
@@ -65,7 +64,7 @@ def handle_record(geo_type: str, feature: dict) -> List[str]:
             convert_json_value(point).strip()
             for point in feature.get("geometry", {"x": "", "y": ""}).values()
         ]
-    # If geometry is multi point, join coordinates into a list of points using json list notation
+    # If geometry is multipoint, join coordinates into a list of points using json list notation
     # and add to the record
     elif geo_type == "esriGeometryMultipoint":
         record += [convert_json_value(feature["geometry"]["points"]).strip()]
@@ -76,8 +75,33 @@ def handle_record(geo_type: str, feature: dict) -> List[str]:
     return record
 
 
+async def check_json_response(response: dict) -> bool:
+    """
+    Parameters
+    ----------
+    response : dict
+        json response from an HTTP request
+    Return
+    ------
+    A boolean value indicating if the response is valid. Raises an error if the issue with the
+    response cannot be recovered from
+    """
+    if "features" not in response.keys():
+        # No features in response and JSON has an error code, retry query
+        if "error" in response.keys():
+            print("Request had an error... sleeping for 5sec to try again")
+            # Sleep to give the server sometime to handle the request again
+            await sleep(5)
+            return False
+        # No features in response and no error code. Raise error which
+        # terminates all operations
+        else:
+            raise KeyError("Response was not an error but no features found")
+    return True
+
+
 async def fetch_query(query: str,
-                      rest_metadata: RestMetadata,
+                      geo_type: str,
                       max_tries: int) -> NamedTemporaryFile:
     temp_file = NamedTemporaryFile(
         mode="w",
@@ -97,38 +121,34 @@ async def fetch_query(query: str,
                     try:
                         invalid_response = response.status != 200
                         if invalid_response:
-                            print(f"Error: {query} got this response:\n{await response.text()}")
-                        json_response = await response.json()
-                        # Check to make sure JSON response has features
-                        if "features" not in json_response.keys():
-                            # No features in response and JSON has an error code, retry query
-                            if "error" in json_response.keys():
-                                print("Request had an error... trying again")
-                                invalid_response = True
-                                # Sleep to give the server sometime to handle the request again
-                                await sleep(10)
+                            response_text = await response.text()
+                            print(f"Error: {query} got this response:\n{response_text}")
+                            continue
+                        else:
+                            json_response = await response.json(content_type=response.content_type)
+                            # Check to make sure JSON response has features
+                            invalid_response = not await check_json_response(json_response)
+                            if invalid_response:
                                 try_number += 1
-                            # No features in response and no error code. Raise error which
-                            # terminates all operations
-                            else:
-                                raise KeyError("Response was not an error but no features found")
                     except ClientConnectorError:
-                        await sleep(10)
+                        print("Client connection error... sleeping for 5sec")
+                        await sleep(5)
                         invalid_response = True
                         try_number += 1
                 if try_number > max_tries:
                     raise Exception(f"Too many tries to fetch query ({query})")
-
             # write all rows to temp csv file using a mapping generator
             with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
                 csv_writer = writer(csv_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
                 csv_writer.writerows(
                     (
-                        handle_record(rest_metadata.geo_type, feature)
+                        handle_record(geo_type, feature)
                         for feature in json_response["features"]
                     )
                 )
         except ClientError as ex:
+            print("Client error raised. Removing temp file")
+            print(ex)
             os.remove(temp_file.name)
             raise ex
-        return temp_file
+    return temp_file
