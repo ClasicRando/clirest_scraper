@@ -7,6 +7,46 @@ from metadata import RestMetadata
 from scraping import fetch_query
 from csv import reader, writer, QUOTE_MINIMAL
 from argparse import ArgumentParser, Namespace
+from progress import print_progress_bar
+
+
+async def fetch_worker(queue, done_queue):
+    while True:
+        query, geo_type, max_tries = await queue.get()
+        result = await fetch_query(query, geo_type, max_tries)
+        await done_queue.put(result)
+        queue.task_done()
+
+
+async def csv_writer_worker(queue, metadata):
+    with open(f"{metadata.name}.csv", encoding="utf8", mode="w", newline="") as output_file:
+        csv_writer = writer(output_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
+        csv_writer.writerow(metadata.fields)
+        results_handled = 0
+        total_results = len(metadata.queries)
+        while True:
+            result = await queue.get()
+            if isinstance(result, BaseException):
+                traceback.print_exc()
+                continue
+            with open(result.name, newline="", encoding="utf8") as csv_file:
+                csv_writer.writerows(
+                    reader(
+                        csv_file,
+                        delimiter=",",
+                        quotechar='"'
+                    )
+                )
+            os.remove(result.name)
+            results_handled += 1
+            queue.task_done()
+            print_progress_bar(
+                iteration=results_handled,
+                total=total_results,
+                prefix="Progress",
+                suffix="Complete",
+                length=50,
+            )
 
 
 async def main(args: Namespace):
@@ -16,25 +56,26 @@ async def main(args: Namespace):
     if proceed == "N":
         proceed = input("Proceed with scrape? (y/n)").upper()
     if proceed == "Y":
+        worker_count = 10
+        fetch_worker_queue = asyncio.Queue(worker_count)
+        writer_queue = asyncio.Queue(worker_count)
         start = time.time()
-        tasks = (fetch_query(query, metadata, args.tries) for query in metadata.queries)
-        with open(f"{metadata.name}.csv", encoding="utf8", mode="w", newline="") as output_file:
-            csv_writer = writer(output_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
-            csv_writer.writerow(metadata.fields)
-            for result in await asyncio.gather(*tasks):
-                if isinstance(result, BaseException):
-                    traceback.print_exc()
-                    continue
-                with open(result.name, newline="", encoding="utf8") as csv_file:
-                    csv_writer.writerows(
-                        reader(
-                            csv_file,
-                            delimiter=",",
-                            quotechar='"'
-                        )
-                    )
-                os.remove(result.name)
+        workers = [asyncio.create_task(fetch_worker(fetch_worker_queue, writer_queue))]
+        writer_task = asyncio.create_task(csv_writer_worker(writer_queue, metadata))
+
+        for query in metadata.queries:
+            await fetch_worker_queue.put((query, metadata.geo_type, args.tries))
+
+        await fetch_worker_queue.join()
+
+        for worker in workers:
+            worker.cancel()
+
+        await writer_queue.join()
+        writer_task.cancel()
+
         print(f"Scraping done. Took {time.time() - start} seconds")
+    print("Exiting Program")
 
 if __name__ == "__main__":
     if sys.platform in ("win32", "cygwin"):
@@ -62,3 +103,4 @@ if __name__ == "__main__":
         required=False
     )
     asyncio.run(main(parser.parse_args()))
+
