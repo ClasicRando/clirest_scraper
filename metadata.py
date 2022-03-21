@@ -5,17 +5,22 @@ from json import dumps
 import aiohttp
 
 
-def max_min_query(oid_field: str) -> str:
-    """
-    Helper query postfix to get max and min Oid values. Given an Oid field name, can be added to the
-    end of a base url
-    """
-    return f'/query?outStatistics=%5B%0D%0A+%7B%0D%0A++++"statisticType"%3A+"max"%2C%0D%0A' \
-           f'++++"onStatisticField' \
-           f'"%3A+"{oid_field}"%2C+++++%0D%0A++++"outStatisticFieldName"%3A+"MAX_VALUE"%0D%0A' \
-           f'++%7D%2C%0D%0A++%7B%0D%0A++++"statisticType"%3A+"min"%2C%0D%0A++++"onStatisticField' \
-           f'"%3A+"{oid_field}"%2C+++++%0D%0A++++"outStatisticFieldName"%3A+"MIN_VALUE"%0D%0A' \
-           f'++%7D%0D%0A%5D&f=json'
+def max_min_query_params(oid_field: str) -> dict:
+    """ Returns the query params for calculating the max and min OID values """
+    max_stat = {
+        "statisticType": "max",
+        "onStatisticField": oid_field,
+        "outStatisticFieldName": "MAX_VALUE",
+    }
+    min_stat = {
+        "statisticType": "min",
+        "onStatisticField": oid_field,
+        "outStatisticFieldName": "MIN_VALUE"
+    }
+    return {
+        "outStatistics": dumps([max_stat, min_stat]),
+        "f": "json",
+    }
 
 
 @dataclass
@@ -69,8 +74,19 @@ class RestMetadata:
 
     @staticmethod
     async def from_url(url: str, ssl: bool):
-        count_query = "/query?where=1%3D1&returnCountOnly=true&f=json"
-        field_query = "?f=json"
+        count_query_params = {
+            "where": "1=1",
+            "returnCountOnly": "true",
+            "f": "json",
+        }
+        field_query_params = {
+            "f": "json"
+        }
+        ids_only_params = {
+            "where": "1=1",
+            "returnIdsOnly": "true",
+            "f": "json",
+        }
         source_count = -1
         server_type = ""
         name = ""
@@ -82,14 +98,17 @@ class RestMetadata:
         oid_field = ""
         max_min_oid = (-1, -1)
         inc_oid = False
+        print(max_min_query_params)
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url + count_query, ssl=ssl) as response:
+            async with session.get(f"{url}/query",
+                                   params=count_query_params,
+                                   ssl=ssl) as response:
                 if response.status == 200:
                     json = await response.json(content_type=response.content_type)
                     source_count = json.get("count", -1)
 
-            async with session.get(url + field_query, ssl=ssl) as response:
+            async with session.get(url, params=field_query_params, ssl=ssl) as response:
                 if response.status == 200:
                     json = await response.json(content_type=response.content_type)
                     advanced_query = json.get("advancedQueryCapabilities", dict())
@@ -122,7 +141,9 @@ class RestMetadata:
                     if oid_fields:
                         oid_field = oid_fields[0]
             if not pagination and stats and oid_field:
-                async with session.get(url + max_min_query(oid_field), ssl=ssl) as response:
+                async with session.get(f"{url}/query",
+                                       params=max_min_query_params(oid_field),
+                                       ssl=ssl) as response:
                     if response.status == 200:
                         json = await response.json(content_type=response.content_type)
                         attributes = json["features"][0]["attributes"]
@@ -130,12 +151,9 @@ class RestMetadata:
                         diff = max_min_oid[0] - max_min_oid[1] + 1
                         inc_oid = diff == source_count
             elif not pagination and not stats and oid_field:
-                params = {
-                    "where": "1=1",
-                    "returnIdsOnly": True,
-                    "f": "json",
-                }
-                async with session.get(url + "/query", params=params, ssl=ssl) as response:
+                async with session.get(f"{url}/query",
+                                       params=ids_only_params,
+                                       ssl=ssl) as response:
                     if response.status == 200:
                         json = await response.json(content_type=response.content_type)
                         oid_values = json["objectIds"]
