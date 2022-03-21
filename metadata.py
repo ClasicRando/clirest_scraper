@@ -37,6 +37,7 @@ class RestMetadata:
     oid_field: str
     max_min_oid: Tuple[int, int]
     inc_oid: bool
+    spatial_reference: int
     """
     Data class for the backing information for an ArcGIS REST server and how to query the service
 
@@ -73,7 +74,7 @@ class RestMetadata:
     """
 
     @staticmethod
-    async def from_url(url: str, ssl: bool):
+    async def from_url(url: str, ssl: bool, spatial_reference: int):
         count_query_params = {
             "where": "1=1",
             "returnCountOnly": "true",
@@ -98,10 +99,10 @@ class RestMetadata:
         oid_field = ""
         max_min_oid = (-1, -1)
         inc_oid = False
-        print(max_min_query_params)
+        query_url = f"{url}/query"
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{url}/query",
+            async with session.get(query_url,
                                    params=count_query_params,
                                    ssl=ssl) as response:
                 if response.status == 200:
@@ -141,7 +142,7 @@ class RestMetadata:
                     if oid_fields:
                         oid_field = oid_fields[0]
             if not pagination and stats and oid_field:
-                async with session.get(f"{url}/query",
+                async with session.get(query_url,
                                        params=max_min_query_params(oid_field),
                                        ssl=ssl) as response:
                     if response.status == 200:
@@ -151,7 +152,7 @@ class RestMetadata:
                         diff = max_min_oid[0] - max_min_oid[1] + 1
                         inc_oid = diff == source_count
             elif not pagination and not stats and oid_field:
-                async with session.get(f"{url}/query",
+                async with session.get(query_url,
                                        params=ids_only_params,
                                        ssl=ssl) as response:
                     if response.status == 200:
@@ -172,8 +173,13 @@ class RestMetadata:
             fields,
             oid_field,
             max_min_oid,
-            inc_oid
+            inc_oid,
+            spatial_reference
         )
+
+    @property
+    def query_url(self) -> str:
+        return f"{self.url}/query"
 
     @property
     def scrape_count(self) -> int:
@@ -196,20 +202,22 @@ class RestMetadata:
         return self.server_type == "TABLE"
 
     @property
-    def geo_text(self) -> str:
+    def geo_params(self) -> dict:
         """
-        String added to the queries for geometry. If service is a Table then empty string.
-        Adds an out spatial reference for geometry to NAD83. Might need to be changed in the future
-
-        TO-DO
-        ----
-        - add ability to provide spatial reference override for non-NA services
+        Returns the request params for the feature's geometry. Empty dict if the server is a table
         """
-        return "" if self.is_table else f"&geometryType={self.geo_type}&outSR=4269"
+        return {} if self.is_table else {
+            "geometryType": self.geo_type,
+            "outSR": self.spatial_reference,
+        }
 
     @property
     def json_text(self) -> str:
         """ Converts class attributes to a dict for displaying details as JSON text """
+        oid_stats = {} if self.pagination else {
+            "Max Min OID": self.max_min_oid,
+            "Incremental OID": self.inc_oid
+        }
         return dumps(
             {
                 "URL": self.url,
@@ -220,16 +228,15 @@ class RestMetadata:
                 "Stats": self.stats,
                 "Server Type": self.server_type,
                 "Geometry Type": self.geo_type,
+                "Spatial Reference": self.spatial_reference,
                 "Fields": self.fields,
                 "OID Fields": self.oid_field,
-                "Max Min OID": self.max_min_oid,
-                "Incremental OID": self.inc_oid
-            },
+            } | oid_stats,
             indent=4
         )
 
     @property
-    def queries(self) -> List[str]:
+    def queries(self) -> List[Tuple[str, dict]]:
         """
         Get all the queries for this service. Returns empty list when no query method available
 
@@ -239,28 +246,38 @@ class RestMetadata:
         """
         if self.pagination:
             return [
-                self.url + self.get_pagination_query(i)
+                (self.query_url, self.get_pagination_query_params(i))
                 for i in range(self.pagination_query_count)
             ]
         elif self.oid_field:
             return [
-                self.url + self.get_oid_query(self.max_min_oid[1] + (i * self.scrape_count))
+                (self.query_url, self.get_oid_query_params(i))
                 for i in range(self.oid_query_count)
             ]
         else:
             return []
 
-    def get_pagination_query(self, query_num: int) -> str:
+    def get_pagination_query_params(self, query_num: int) -> dict:
         """
-        Generate query for service when pagination is supported using query_num to get offset
+        Generate query params for service when pagination is supported using query_num to get offset
         """
-        return f"/query?where=1+%3D+1&resultOffset={query_num * self.scrape_count}" \
-               f"&resultRecordCount={self.scrape_count}{self.geo_text}&outFields=*&f=json"
+        return {
+            "where": "1=1",
+            "resultOffset": query_num * self.scrape_count,
+            "resultRecordCount": self.scrape_count,
+            "outFields": "*",
+            "f": "json",
+        } | self.geo_params
 
-    def get_oid_query(self, min_oid: int) -> str:
+    def get_oid_query_params(self, index: int) -> dict:
         """
-        Generate query for service when Oid is available using a starting Oid number and an offset
+        Generate query params for service when Oid is available using a starting Oid number and an
+        offset
         """
-        return f"/query?where={self.oid_field}+>%3D+{min_oid}+and+" \
-               f"{self.oid_field}+<%3D+{min_oid + self.scrape_count - 1}" \
-               f"{self.geo_text}&outFields=*&f=json"
+        min_oid = self.max_min_oid[1] + (index * self.scrape_count)
+        max_oid = min_oid + self.scrape_count - 1
+        return {
+            "where": f"{self.oid_field} > {min_oid} and {self.oid_field} < {max_oid}",
+            "outFields": "*",
+            "f": "json",
+        } | self.geo_params

@@ -12,8 +12,8 @@ from tqdm import tqdm
 
 async def fetch_worker(queue: asyncio.Queue, done_queue: asyncio.Queue, ssl: bool):
     while True:
-        query, geo_type, max_tries = await queue.get()
-        result = await fetch_query(query, geo_type, max_tries, ssl)
+        query, params, geo_type, max_tries = await queue.get()
+        result = await fetch_query(query, params, geo_type, max_tries, ssl)
         await done_queue.put(result)
         queue.task_done()
 
@@ -45,7 +45,7 @@ async def csv_writer_worker(queue: asyncio.Queue, metadata: RestMetadata):
 
 
 async def main(args: Namespace):
-    metadata = await RestMetadata.from_url(args.url, args.ssl)
+    metadata = await RestMetadata.from_url(args.url, args.ssl, args.sr)
     proceed = "Y" if args.yes is None else args.yes
     print(metadata.json_text)
     if proceed == "N":
@@ -57,8 +57,8 @@ async def main(args: Namespace):
         workers = [asyncio.create_task(fetch_worker(fetch_worker_queue, writer_queue, args.ssl))]
         writer_task = asyncio.create_task(csv_writer_worker(writer_queue, metadata))
 
-        for query in metadata.queries:
-            await fetch_worker_queue.put((query, metadata.geo_type, args.tries))
+        for (query, params) in metadata.queries:
+            await fetch_worker_queue.put((query, params, metadata.geo_type, args.tries))
 
         await fetch_worker_queue.join()
 
@@ -110,6 +110,13 @@ if __name__ == "__main__":
         help="number of works spawned to perform the http requests (Default: 10)",
         type=int,
         default=10,
+        required=False
+    )
+    parser.add_argument(
+        "--sr",
+        help="spatial reference code (epsg) to project the geometry (Default: 4269)",
+        type=int,
+        default=4269,
         required=False
     )
     asyncio.run(main(parser.parse_args()))

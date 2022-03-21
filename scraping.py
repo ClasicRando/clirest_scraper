@@ -101,6 +101,7 @@ async def check_json_response(response: dict) -> bool:
 
 
 async def fetch_query(query: str,
+                      params: dict,
                       geo_type: str,
                       max_tries: int,
                       ssl: bool,) -> NamedTemporaryFile:
@@ -118,7 +119,7 @@ async def fetch_query(query: str,
             json_response = dict()
             try_number = 1
             while invalid_response:
-                async with session.get(query, ssl=ssl) as response:
+                async with session.get(query, params=params, ssl=ssl) as response:
                     try:
                         invalid_response = response.status != 200
                         if invalid_response:
