@@ -107,7 +107,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--workers",
         "-w",
-        help="number of works spawned to perform the http requests (Default: 10)",
+        help="number of workers spawned to perform the HTTP requests (Default: 10)",
         type=int,
         default=10,
         required=False
