@@ -68,7 +68,7 @@ class RestMetadata:
     """
 
     @staticmethod
-    async def from_url(url: str):
+    async def from_url(url: str, ssl: bool):
         count_query = "/query?where=1%3D1&returnCountOnly=true&f=json"
         field_query = "?f=json"
         source_count = -1
@@ -84,12 +84,12 @@ class RestMetadata:
         inc_oid = False
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url + count_query) as response:
+            async with session.get(url + count_query, ssl=ssl) as response:
                 if response.status == 200:
                     json = await response.json(content_type=response.content_type)
                     source_count = json.get("count", -1)
 
-            async with session.get(url + field_query) as response:
+            async with session.get(url + field_query, ssl=ssl) as response:
                 if response.status == 200:
                     json = await response.json(content_type=response.content_type)
                     advanced_query = json.get("advancedQueryCapabilities", dict())
@@ -122,7 +122,7 @@ class RestMetadata:
                     if oid_fields:
                         oid_field = oid_fields[0]
             if not pagination and stats and oid_field:
-                async with session.get(url + max_min_query(oid_field), ssl=False) as response:
+                async with session.get(url + max_min_query(oid_field), ssl=ssl) as response:
                     if response.status == 200:
                         json = await response.json(content_type=response.content_type)
                         attributes = json["features"][0]["attributes"]
@@ -135,7 +135,7 @@ class RestMetadata:
                     "returnIdsOnly": True,
                     "f": "json",
                 }
-                async with session.get(url + "/query", params=params, ssl=False) as response:
+                async with session.get(url + "/query", params=params, ssl=ssl) as response:
                     if response.status == 200:
                         json = await response.json(content_type=response.content_type)
                         oid_values = json["objectIds"]

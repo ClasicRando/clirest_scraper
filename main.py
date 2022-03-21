@@ -10,15 +10,15 @@ from argparse import ArgumentParser, Namespace
 from tqdm import tqdm
 
 
-async def fetch_worker(queue, done_queue):
+async def fetch_worker(queue: asyncio.Queue, done_queue: asyncio.Queue, ssl: bool):
     while True:
         query, geo_type, max_tries = await queue.get()
-        result = await fetch_query(query, geo_type, max_tries)
+        result = await fetch_query(query, geo_type, max_tries, ssl)
         await done_queue.put(result)
         queue.task_done()
 
 
-async def csv_writer_worker(queue, metadata):
+async def csv_writer_worker(queue: asyncio.Queue, metadata: RestMetadata):
     with open(f"{metadata.name}.csv", encoding="utf8", mode="w", newline="") as output_file:
         csv_writer = writer(output_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
         csv_writer.writerow(metadata.fields)
@@ -45,7 +45,7 @@ async def csv_writer_worker(queue, metadata):
 
 
 async def main(args: Namespace):
-    metadata = await RestMetadata.from_url(args.url)
+    metadata = await RestMetadata.from_url(args.url, args.ssl)
     proceed = "Y" if args.yes is None else args.yes
     print(metadata.json_text)
     if proceed == "N":
@@ -55,7 +55,7 @@ async def main(args: Namespace):
         fetch_worker_queue = asyncio.Queue(worker_count)
         writer_queue = asyncio.Queue(worker_count)
         start = time.time()
-        workers = [asyncio.create_task(fetch_worker(fetch_worker_queue, writer_queue))]
+        workers = [asyncio.create_task(fetch_worker(fetch_worker_queue, writer_queue, args.ssl))]
         writer_task = asyncio.create_task(csv_writer_worker(writer_queue, metadata))
 
         for query in metadata.queries:
@@ -93,8 +93,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tries",
         "-t",
-        help="max number of tries for a scraping query before operation is cancelled",
+        help="max number of tries for a scraping query before operation is cancelled (Default: 10)",
+        type=int,
         default=10,
+        required=False
+    )
+    parser.add_argument(
+        "--ssl",
+        help="synonymous with ssl option for requests/aiohttp library GET request (Default: True)",
+        type=bool,
+        default=True,
         required=False
     )
     asyncio.run(main(parser.parse_args()))
