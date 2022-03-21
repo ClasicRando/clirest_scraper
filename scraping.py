@@ -4,7 +4,7 @@ from tempfile import NamedTemporaryFile
 from numpy import format_float_positional
 from typing import Any, List
 from json import dumps
-from aiohttp import ClientSession, ClientConnectorError, ClientError
+from aiohttp import ClientSession, ClientConnectorError, ClientError, ClientSSLError
 from csv import writer, QUOTE_MINIMAL
 
 
@@ -148,8 +148,14 @@ async def fetch_query(query: str,
                         for feature in json_response["features"]
                     )
                 )
+        except ClientSSLError as ex:
+            print("Client error raised. Issue with the service's SSL certification")
+            print("To avoid this error you can provide '--ssl false' as a command line argument")
+            print("THIS IS VERY RISKY!! Only use this argument if you are sure the site is legit")
+            print(ex)
+            os.remove(temp_file.name)
+            raise ex
         except ClientError as ex:
-            print("Client error raised. Removing temp file")
             print(ex)
             os.remove(temp_file.name)
             raise ex
