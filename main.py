@@ -51,9 +51,8 @@ async def main(args: Namespace):
     if proceed == "N":
         proceed = input("Proceed with scrape? (y/n)").upper()
     if proceed == "Y":
-        worker_count = 10
-        fetch_worker_queue = asyncio.Queue(worker_count)
-        writer_queue = asyncio.Queue(worker_count)
+        fetch_worker_queue = asyncio.Queue(args.workers)
+        writer_queue = asyncio.Queue(args.workers)
         start = time.time()
         workers = [asyncio.create_task(fetch_worker(fetch_worker_queue, writer_queue, args.ssl))]
         writer_task = asyncio.create_task(csv_writer_worker(writer_queue, metadata))
@@ -103,6 +102,14 @@ if __name__ == "__main__":
         help="synonymous with ssl option for requests/aiohttp library GET request (Default: True)",
         type=bool,
         default=True,
+        required=False
+    )
+    parser.add_argument(
+        "--workers",
+        "-w",
+        help="number of works spawned to perform the http requests (Default: 10)",
+        type=int,
+        default=10,
         required=False
     )
     asyncio.run(main(parser.parse_args()))
