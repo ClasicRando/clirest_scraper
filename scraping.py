@@ -1,11 +1,15 @@
-import os
+from os import remove as os_remove
 from asyncio import sleep
 from tempfile import NamedTemporaryFile
 from numpy import format_float_positional
-from typing import Any, List
+from typing import Any, List, Optional
 from json import dumps
 from aiohttp import ClientSession, ClientConnectorError, ClientError, ClientSSLError
 from csv import writer, QUOTE_MINIMAL
+from metadata import RestField, RestFieldType, RestGeometryType
+from functools import reduce
+from operator import iconcat
+from tqdm import tqdm
 
 
 def convert_json_value(x: Any) -> str:
@@ -40,11 +44,20 @@ def convert_json_value(x: Any) -> str:
         return str(x)
 
 
-def handle_record(geo_type: str, feature: dict) -> List[str]:
+def convert_json_field(x: Any, field: Optional[RestField] = None) -> List[str]:
+    if field.is_code:
+        code = convert_json_value(x)
+        return [code.strip(), field.codes.get(code, '').strip()]
+    return [convert_json_value(x)]
+
+
+def handle_record(fields: List[RestField], geo_type: RestGeometryType, feature: dict) -> List[str]:
     """
     Parameters
     ----------
-    geo_type : str
+    fields : List[RestField]
+        service fields to collect feature attributes
+    geo_type : RestGeometryType
         geometry type from the RestMetadata object
     feature : str
         json object from the query's feature json array
@@ -52,27 +65,56 @@ def handle_record(geo_type: str, feature: dict) -> List[str]:
     ------
     feature object converted to List[str] with geometry is applicable
     """
+    attributes = feature["attributes"]
     # collect all values from the attributes key and convert them to string
     record = [
-        convert_json_value(value).strip()
-        for value in feature["attributes"].values()
+        convert_json_field(attributes[field.name], field=field)
+        for field in fields
+        if field.type != RestFieldType.Geometry
     ]
     # If geometry is point, get X and Y and add to the record. If no geometry present, default to a
     # blank X and Y
-    if geo_type == "esriGeometryPoint":
-        record += [
-            convert_json_value(point).strip()
-            for point in feature.get("geometry", {"x": "", "y": ""}).values()
-        ]
-    # If geometry is multipoint, join coordinates into a list of points using json list notation
-    # and add to the record
-    elif geo_type == "esriGeometryMultipoint":
-        record += [convert_json_value(feature["geometry"]["points"]).strip()]
-    # If geometry is Polygon get the rings and add the value to the record
-    elif geo_type == "esriGeometryPolygon":
-        record += [convert_json_value(feature["geometry"]["rings"]).strip()]
-    # Other geometries could exist but are not currently handled
-    return record
+    match geo_type:
+        case RestGeometryType.Point:
+            record += [
+                [convert_json_value(point).strip()]
+                for point in feature.get("geometry", {"x": "", "y": ""}).values()
+            ]
+        # If geometry is multipoint, join coordinates into a list of points using json list notation
+        # and add to the record
+        case RestGeometryType.Multipoint:
+            record += [[convert_json_value(feature["geometry"]["points"]).strip()]]
+        # If geometry is Polyline get the paths and add the value to the record
+        case RestGeometryType.Polyline:
+            record += [[convert_json_value(feature["geometry"]["paths"]).strip()]]
+        # If geometry is Polygon get the rings and add the value to the record
+        case RestGeometryType.Polygon:
+            record += [[convert_json_value(feature["geometry"]["rings"]).strip()]]
+        # If geometry is Envelope get each bound and add the dict to the record
+        case RestGeometryType.Envelope:
+            geometry = feature["geometry"]
+            bounds_map = {}
+            if "xmin" in geometry:
+                bounds_map["xmin"] = geometry["xmin"]
+            if "ymin" in geometry:
+                bounds_map["ymin"] = geometry["ymin"]
+            if "xmax" in geometry:
+                bounds_map["xmax"] = geometry["xmax"]
+            if "ymax" in geometry:
+                bounds_map["ymax"] = geometry["ymax"]
+            if "zmin" in geometry:
+                bounds_map["zmin"] = geometry["zmin"]
+            if "zmax" in geometry:
+                bounds_map["zmax"] = geometry["zmax"]
+            if "mmin" in geometry:
+                bounds_map["mmin"] = geometry["mmin"]
+            if "mmax" in geometry:
+                bounds_map["mmax"] = geometry["mmax"]
+            record += [[convert_json_value(bounds_map).strip()]]
+    return list(reduce(
+        iconcat,
+        record,
+    ))
 
 
 async def check_json_response(response: dict) -> bool:
@@ -100,15 +142,25 @@ async def check_json_response(response: dict) -> bool:
     return True
 
 
-async def fetch_query(query: str,
+def handle_csv_value(value: str) -> str:
+    if any((char == ',' or char == '"' or char == '\r' or char == '\n' for char in value)):
+        new_value = value.replace("\"", "\"\"")
+        return f'"{new_value}"'
+    return value
+
+
+async def fetch_query(t: tqdm,
+                      query: str,
                       params: dict,
-                      geo_type: str,
+                      fields: List[RestField],
+                      geo_type: RestGeometryType,
                       max_tries: int,
                       ssl: bool,) -> NamedTemporaryFile:
     temp_file = NamedTemporaryFile(
         mode="w",
         encoding="utf8",
         suffix=".csv",
+        dir="temp_files",
         delete=False,
         newline="\n"
     )
@@ -117,26 +169,23 @@ async def fetch_query(query: str,
         try:
             invalid_response = True
             json_response = dict()
-            try_number = 1
+            try_number = 0
             while invalid_response:
                 async with session.get(query, params=params, ssl=ssl) as response:
+                    try_number += 1
                     try:
                         invalid_response = response.status != 200
                         if invalid_response:
                             response_text = await response.text()
-                            print(f"Error: {query} got this response:\n{response_text}")
-                            continue
+                            t.write(f"Error: {query} got this response:\n{response_text}")
                         else:
                             json_response = await response.json(content_type=response.content_type)
                             # Check to make sure JSON response has features
                             invalid_response = not await check_json_response(json_response)
-                            if invalid_response:
-                                try_number += 1
                     except ClientConnectorError:
-                        print("Client connection error... sleeping for 5sec")
+                        t.write("Client connection error... sleeping for 5sec")
                         await sleep(5)
                         invalid_response = True
-                        try_number += 1
                 if try_number > max_tries:
                     raise Exception(f"Too many tries to fetch query ({query})")
             # write all rows to temp csv file using a mapping generator
@@ -144,19 +193,19 @@ async def fetch_query(query: str,
                 csv_writer = writer(csv_file, delimiter=",", quotechar='"', quoting=QUOTE_MINIMAL)
                 csv_writer.writerows(
                     (
-                        handle_record(geo_type, feature)
+                        handle_record(fields, geo_type, feature)
                         for feature in json_response["features"]
                     )
                 )
         except ClientSSLError as ex:
-            print("Client error raised. Issue with the service's SSL certification")
-            print("To avoid this error you can provide '--ssl false' as a command line argument")
-            print("THIS IS VERY RISKY!! Only use this argument if you are sure the site is legit")
-            print(ex)
-            os.remove(temp_file.name)
+            t.write("Client error raised. Issue with the service's SSL certification")
+            t.write("To avoid this error you can provide '--ssl false' as a command line argument")
+            t.write("THIS IS VERY RISKY!! Only use this argument if you are sure the site is legit")
+            t.write(ex)
+            os_remove(temp_file.name)
             raise ex
         except ClientError as ex:
-            print(ex)
-            os.remove(temp_file.name)
+            t.write(ex)
+            os_remove(temp_file.name)
             raise ex
     return temp_file
