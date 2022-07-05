@@ -9,6 +9,7 @@ from metadata import RestField, RestFieldType, RestGeometryType
 from functools import reduce
 from operator import iconcat
 from tqdm import tqdm
+from datetime import datetime
 
 
 def convert_json_value(x: Any) -> str:
@@ -28,29 +29,38 @@ def convert_json_value(x: Any) -> str:
     """
     if isinstance(x, str):
         return x
-    elif isinstance(x, int):
+    if x is None:
+        return ""
+    if isinstance(x, int):
         return str(x)
     # Note that for JSON numbers, some truncation might occur during json load into python dict
-    elif isinstance(x, float):
+    if isinstance(x, float):
         return format_float_positional(x).rstrip(".")
-    elif isinstance(x, bool):
+    if isinstance(x, bool):
         return "TRUE" if x else "FALSE"
-    elif x is None:
-        return ""
-    elif x is list:
+    if x is list:
         return dumps(x)
-    else:
-        return str(x)
+    return str(x)
 
 
-def convert_json_field(x: Any, field: RestField) -> List[str]:
+def convert_json_field(x: Any, field: RestField, dates: bool) -> List[str]:
+    value = convert_json_value(x).strip()
     if field.is_code:
-        code = convert_json_value(x)
-        return [code.strip(), field.codes.get(code, '').strip()]
-    return [convert_json_value(x).strip()]
+        return [value, field.codes.get(value, '').strip()]
+    if field.type == RestFieldType.Date and dates:
+        if value == "":
+            return [value, value]
+        return [
+            value,
+            datetime.utcfromtimestamp(float(value)/1000).strftime("%Y-%m-%d %H:%M:%S%z")
+        ]
+    return [value]
 
 
-def handle_record(fields: List[RestField], geo_type: RestGeometryType, feature: dict) -> List[str]:
+def handle_record(fields: List[RestField],
+                  geo_type: RestGeometryType,
+                  dates: bool,
+                  feature: dict) -> List[str]:
     """
     Parameters
     ----------
@@ -58,6 +68,8 @@ def handle_record(fields: List[RestField], geo_type: RestGeometryType, feature: 
         service fields to collect feature attributes
     geo_type : RestGeometryType
         geometry type from the RestMetadata object
+    dates : bool
+        flag indicating if date fields should be converted to UTC datetime string
     feature : str
         json object from the query's feature json array
     Return
@@ -67,7 +79,7 @@ def handle_record(fields: List[RestField], geo_type: RestGeometryType, feature: 
     attributes = feature["attributes"]
     # collect all values from the attributes key and convert them to string
     record = [
-        convert_json_field(attributes[field.name], field=field)
+        convert_json_field(attributes[field.name], field=field, dates=dates)
         for field in fields
         if field.type != RestFieldType.Geometry
     ]
@@ -187,7 +199,12 @@ async def fetch_query(t: tqdm,
             # write all rows to temp csv file using a mapping generator
             with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
                 for feature in json_response["features"]:
-                    record = handle_record(options["fields"], options["geo_type"], feature)
+                    record = handle_record(
+                        fields=options["fields"],
+                        geo_type=options["geo_type"],
+                        dates=options["dates"],
+                        feature=feature,
+                    )
                     line = ",".join([handle_csv_value(value) for value in record]) + "\n"
                     csv_file.write(line)
         except ClientSSLError as ex:
