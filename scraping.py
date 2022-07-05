@@ -48,7 +48,7 @@ def convert_json_field(x: Any, field: Optional[RestField] = None) -> List[str]:
     if field.is_code:
         code = convert_json_value(x)
         return [code.strip(), field.codes.get(code, '').strip()]
-    return [convert_json_value(x)]
+    return [convert_json_value(x).strip()]
 
 
 def handle_record(fields: List[RestField], geo_type: RestGeometryType, feature: dict) -> List[str]:
