@@ -1,7 +1,7 @@
 from textwrap import dedent
 from dataclasses import dataclass
 from enum import Enum, unique
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Generator
 from math import ceil
 from json import dumps
 from aiohttp import ClientSession
@@ -368,3 +368,11 @@ class RestMetadata:
             "outFields": "*",
             "f": "json",
         } | self.geo_params
+
+    def columns(self, dates: bool = False) -> Generator[str, None, None]:
+        for field in self.fields:
+            yield field.name
+            if field.is_code:
+                yield f"{field.name}_DESC"
+            if field.type == RestFieldType.Date and dates:
+                yield f"{field.name}_DT"

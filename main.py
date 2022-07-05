@@ -3,8 +3,6 @@ from metadata import RestMetadata
 from scraping import fetch_query, handle_csv_value
 from argparse import ArgumentParser, Namespace
 from tqdm import tqdm
-from functools import reduce
-from operator import iconcat
 from pathlib import Path
 from time import time as now
 from sys import platform as sys_platform
@@ -15,7 +13,7 @@ from asyncio import Queue, create_task, set_event_loop_policy, run as asyncio_ru
 async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
     try:
         while True:
-            query, params, fields, geo_type, max_tries = await queue.get()
+            query, params = await queue.get()
             result = await fetch_query(t, query, params, options)
             await done_queue.put(result)
             queue.task_done()
@@ -23,7 +21,7 @@ async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
         t.write(f"Encountered an error in the fetch worker\n{ex}")
 
 
-async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata):
+async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata, options: dict):
     output_file = None
     try:
         output_files_directory = Path("output_files")
@@ -34,15 +32,13 @@ async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata):
             mode="w",
             newline="",
         )
-        header_cols = list(reduce(
-            iconcat,
-            [
-                [field.name, f"{field.name}_DESC"] if field.is_code else [field.name]
-                for field in metadata.fields
-            ],
-        ))
-        header_line = ",".join((handle_csv_value(column) for column in header_cols)) + "\n"
-        output_file.write(header_line)
+        header_line = ",".join(
+            (
+                handle_csv_value(column)
+                for column in metadata.columns(options["dates"])
+            )
+        )
+        output_file.write(f"{header_line}\n")
         results_handled = 0
         while True:
             result = await queue.get()
@@ -89,7 +85,7 @@ async def main(args: Namespace):
             create_task(fetch_worker(t, fetch_worker_queue, writer_queue, options))
             for _ in range(args.workers)
         ]
-        writer_task = create_task(csv_writer_worker(t, writer_queue, metadata))
+        writer_task = create_task(csv_writer_worker(t, writer_queue, metadata, options))
 
         for (query, params) in metadata.queries:
             await fetch_worker_queue.put((query, params))
