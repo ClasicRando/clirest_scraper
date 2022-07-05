@@ -12,11 +12,11 @@ from os import remove as os_remove, mkdir
 from asyncio import Queue, create_task, set_event_loop_policy, run as asyncio_run
 
 
-async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, ssl: bool):
+async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
     try:
         while True:
             query, params, fields, geo_type, max_tries = await queue.get()
-            result = await fetch_query(t, query, params, fields, geo_type, max_tries, ssl)
+            result = await fetch_query(t, query, params, options)
             await done_queue.put(result)
             queue.task_done()
     except Exception as ex:
@@ -78,16 +78,21 @@ async def main(args: Namespace):
         fetch_worker_queue = Queue(args.workers)
         writer_queue = Queue(args.workers)
         start = now()
+        options = {
+            "ssl": args.ssl,
+            "dates": args.dates,
+            "tries": args.tries,
+            "fields": metadata.fields,
+            "geo_type": metadata.geo_type
+        }
         workers = [
-            create_task(fetch_worker(t, fetch_worker_queue, writer_queue, args.ssl))
+            create_task(fetch_worker(t, fetch_worker_queue, writer_queue, options))
             for _ in range(args.workers)
         ]
         writer_task = create_task(csv_writer_worker(t, writer_queue, metadata))
 
         for (query, params) in metadata.queries:
-            await fetch_worker_queue.put(
-                (query, params, metadata.fields, metadata.geo_type, args.tries)
-            )
+            await fetch_worker_queue.put((query, params))
 
         await fetch_worker_queue.join()
 
@@ -146,6 +151,14 @@ if __name__ == "__main__":
         "--sr",
         help="spatial reference code (epsg) to project the geometry",
         type=int,
+        required=False
+    )
+    parser.add_argument(
+        "--dates",
+        "--d",
+        help="convert date fields to UTC epoch",
+        type=bool,
+        default=False,
         required=False
     )
     asyncio_run(main(parser.parse_args()))

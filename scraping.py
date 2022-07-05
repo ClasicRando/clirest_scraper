@@ -2,7 +2,7 @@ from os import remove as os_remove
 from asyncio import sleep
 from tempfile import NamedTemporaryFile
 from numpy import format_float_positional
-from typing import Any, List, Optional
+from typing import Any, List
 from json import dumps
 from aiohttp import ClientSession, ClientConnectorError, ClientError, ClientSSLError
 from metadata import RestField, RestFieldType, RestGeometryType
@@ -43,7 +43,7 @@ def convert_json_value(x: Any) -> str:
         return str(x)
 
 
-def convert_json_field(x: Any, field: Optional[RestField] = None) -> List[str]:
+def convert_json_field(x: Any, field: RestField) -> List[str]:
     if field.is_code:
         code = convert_json_value(x)
         return [code.strip(), field.codes.get(code, '').strip()]
@@ -151,10 +151,7 @@ def handle_csv_value(value: str) -> str:
 async def fetch_query(t: tqdm,
                       query: str,
                       params: dict,
-                      fields: List[RestField],
-                      geo_type: RestGeometryType,
-                      max_tries: int,
-                      ssl: bool,) -> NamedTemporaryFile:
+                      options: dict) -> NamedTemporaryFile:
     temp_file = NamedTemporaryFile(
         mode="w",
         encoding="utf8",
@@ -170,7 +167,7 @@ async def fetch_query(t: tqdm,
             json_response = dict()
             try_number = 0
             while invalid_response:
-                async with session.get(query, params=params, ssl=ssl) as response:
+                async with session.get(query, params=params, ssl=options["ssl"]) as response:
                     try_number += 1
                     try:
                         invalid_response = response.status != 200
@@ -185,12 +182,12 @@ async def fetch_query(t: tqdm,
                         t.write("Client connection error... sleeping for 5sec")
                         await sleep(5)
                         invalid_response = True
-                if try_number > max_tries:
+                if try_number > options["tries"]:
                     raise Exception(f"Too many tries to fetch query ({query})")
             # write all rows to temp csv file using a mapping generator
             with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
                 for feature in json_response["features"]:
-                    record = handle_record(fields, geo_type, feature)
+                    record = handle_record(options["fields"], options["geo_type"], feature)
                     line = ",".join([handle_csv_value(value) for value in record]) + "\n"
                     csv_file.write(line)
         except ClientSSLError as ex:
