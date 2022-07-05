@@ -41,7 +41,7 @@ async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata):
                 for field in metadata.fields
             ],
         ))
-        header_line = ",".join((handle_csv_value(column) for column in header_cols))
+        header_line = ",".join((handle_csv_value(column) for column in header_cols)) + "\n"
         output_file.write(header_line)
         results_handled = 0
         while True:
