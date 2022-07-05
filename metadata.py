@@ -300,7 +300,7 @@ class RestMetadata:
             raise AttributeError("No spatial reference provided to service with geometry")
 
     def print_formatted(self):
-        """ Converts class attributes to a dict for displaying details as JSON text """
+        """ Prints class attributes to the console """
         print("Metadata")
         print("--------")
         temp_str = f"""\
@@ -319,6 +319,8 @@ class RestMetadata:
             print(f"OID Field: {self.oid_field.name}")
         if self.source_spatial_reference is not None:
             print(f"Source Spatial Reference: {self.source_spatial_reference}")
+        if self.output_spatial_reference is not None:
+            print(f"Output Spatial Reference: {self.output_spatial_reference}")
 
     @property
     def queries(self) -> List[Tuple[str, dict]]:
@@ -347,12 +349,12 @@ class RestMetadata:
         Generate query params for service when pagination is supported using query_num to get offset
         """
         return {
-                   "where": "1=1",
-                   "resultOffset": query_num * self.scrape_count,
-                   "resultRecordCount": self.scrape_count,
-                   "outFields": "*",
-                   "f": "json",
-               } | self.geo_params
+            "where": "1=1",
+            "resultOffset": query_num * self.scrape_count,
+            "resultRecordCount": self.scrape_count,
+            "outFields": "*",
+            "f": "json",
+        } | self.geo_params
 
     def get_oid_query_params(self, index: int) -> dict:
         """
@@ -362,7 +364,7 @@ class RestMetadata:
         min_oid = self.max_min_oid[1] + (index * self.scrape_count)
         max_oid = min_oid + self.scrape_count - 1
         return {
-                   "where": f"{self.oid_field} > {min_oid} and {self.oid_field} < {max_oid}",
-                   "outFields": "*",
-                   "f": "json",
-               } | self.geo_params
+            "where": f"{self.oid_field} > {min_oid} and {self.oid_field} < {max_oid}",
+            "outFields": "*",
+            "f": "json",
+        } | self.geo_params
