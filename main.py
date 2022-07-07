@@ -19,6 +19,7 @@ async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
             queue.task_done()
     except Exception as ex:
         t.write(f"Encountered an error in the fetch worker\n{ex}")
+        return
 
 
 async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata, options: dict):
@@ -53,6 +54,7 @@ async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata, optio
             t.update(1)
     except Exception as ex:
         t.write(f"Encountered an error in the writer worker\n{ex}")
+        return
     finally:
         if output_file:
             output_file.close()
