@@ -185,7 +185,7 @@ async def fetch_query(t: tqdm,
                         invalid_response = response.status != 200
                         if invalid_response:
                             response_text = await response.text()
-                            t.write(f"Error: {query} got this response:\n{response_text}")
+                            t.write(f"Error: {query}, {params} got this response:\n{response_text}")
                         else:
                             json_response = await response.json(content_type=response.content_type)
                             # Check to make sure JSON response has features
@@ -195,7 +195,7 @@ async def fetch_query(t: tqdm,
                         await sleep(5)
                         invalid_response = True
                 if try_number > options["tries"]:
-                    raise Exception(f"Too many tries to fetch query ({query})")
+                    raise Exception(f"Too many tries to fetch query ({query}, {params})")
             # write all rows to temp csv file using a mapping generator
             with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
                 for feature in json_response["features"]:
