@@ -6,24 +6,14 @@ from math import ceil
 from json import dumps
 from aiohttp import ClientSession
 from pandas import DataFrame
+from itertools import zip_longest
 
 
-def max_min_query_params(oid_field: str) -> dict:
-    """ Returns the query params for calculating the max and min OID values """
-    max_stat = {
-        "statisticType": "max",
-        "onStatisticField": oid_field,
-        "outStatisticFieldName": "MAX_VALUE",
-    }
-    min_stat = {
-        "statisticType": "min",
-        "onStatisticField": oid_field,
-        "outStatisticFieldName": "MIN_VALUE"
-    }
-    return {
-        "outStatistics": dumps([max_stat, min_stat]),
-        "f": "json",
-    }
+ids_only_params = {
+    "where": "1=1",
+    "returnIdsOnly": "true",
+    "f": "json",
+}
 
 
 @unique
@@ -89,6 +79,67 @@ class RestField:
         }
 
 
+def max_min_query_params(oid_field: RestField) -> dict:
+    """ Returns the query params for calculating the max and min OID values """
+    max_stat = {
+        "statisticType": "max",
+        "onStatisticField": oid_field.name,
+        "outStatisticFieldName": "MAX_VALUE",
+    }
+    min_stat = {
+        "statisticType": "min",
+        "onStatisticField": oid_field.name,
+        "outStatisticFieldName": "MIN_VALUE"
+    }
+    return {
+        "outStatistics": dumps([max_stat, min_stat]),
+        "f": "json",
+    }
+
+
+async def get_all_object_ids(session: ClientSession,
+                             query_url: str,
+                             ssl: bool) -> Optional[List[int]]:
+    async with session.get(query_url,
+                           params=ids_only_params,
+                           ssl=ssl) as response:
+        if response.status == 200:
+            json = await response.json(content_type=response.content_type)
+            return json["objectIds"]
+
+
+async def get_max_min_no_stats(session: ClientSession,
+                               query_url: str,
+                               ssl: bool) -> Optional[Tuple[int, int]]:
+    object_ids = await get_all_object_ids(session, query_url, ssl)
+    max_min_oid = (max(object_ids), min(object_ids))
+    return max_min_oid
+
+
+async def get_max_min_stats(session: ClientSession,
+                            query_url: str,
+                            oid_field: RestField,
+                            ssl: bool) -> Optional[Tuple[int, int]]:
+    async with session.get(query_url,
+                           params=max_min_query_params(oid_field),
+                           ssl=ssl) as response:
+        if response.status == 200:
+            json = await response.json(content_type=response.content_type)
+            attributes = json["features"][0]["attributes"]
+            return attributes["MAX_VALUE"], attributes["MIN_VALUE"]
+
+
+async def get_max_min(session: ClientSession,
+                      query_url: str,
+                      oid_field: RestField,
+                      stats: bool,
+                      ssl: bool) -> Optional[Tuple[int, int]]:
+    if stats:
+        return await get_max_min_stats(session, query_url, oid_field, ssl)
+    else:
+        return await get_max_min_no_stats(session, query_url, ssl)
+
+
 @dataclass
 class RestMetadata:
     url: str
@@ -101,7 +152,7 @@ class RestMetadata:
     geo_type: RestGeometryType
     fields: List[RestField]
     oid_field: Optional[RestField]
-    max_min_oid: Tuple[int, int]
+    max_min_oid: Optional[Tuple[int, int]]
     inc_oid: bool
     source_spatial_reference: Optional[int]
     output_spatial_reference: Optional[int]
@@ -150,11 +201,6 @@ class RestMetadata:
         field_query_params = {
             "f": "json"
         }
-        ids_only_params = {
-            "where": "1=1",
-            "returnIdsOnly": "true",
-            "f": "json",
-        }
         source_count = -1
         server_type = ""
         name = ""
@@ -164,7 +210,7 @@ class RestMetadata:
         geo_type = RestGeometryType.None_
         fields = []
         oid_field = ""
-        max_min_oid = (-1, -1)
+        max_min_oid = None
         inc_oid = False
         query_url = f"{url}/query"
         source_spatial_reference = None
@@ -218,26 +264,11 @@ class RestMetadata:
                     ]
                     if oid_fields:
                         oid_field = oid_fields[0]
-            if not pagination and stats and oid_field:
-                async with session.get(query_url,
-                                       params=max_min_query_params(oid_field),
-                                       ssl=ssl) as response:
-                    if response.status == 200:
-                        json = await response.json(content_type=response.content_type)
-                        attributes = json["features"][0]["attributes"]
-                        max_min_oid = (attributes["MAX_VALUE"], attributes["MIN_VALUE"])
-                        diff = max_min_oid[0] - max_min_oid[1] + 1
-                        inc_oid = diff == source_count
-            elif not pagination and not stats and oid_field:
-                async with session.get(query_url,
-                                       params=ids_only_params,
-                                       ssl=ssl) as response:
-                    if response.status == 200:
-                        json = await response.json(content_type=response.content_type)
-                        oid_values = json["objectIds"]
-                        max_min_oid = (max(oid_values), min(oid_values))
-                        diff = max_min_oid[0] - max_min_oid[1] + 1
-                        inc_oid = diff == source_count
+            if not pagination and oid_field:
+                max_min_oid = await get_max_min(session, query_url, oid_field, stats, ssl)
+                if max_min_oid is not None:
+                    diff = max_min_oid[0] - max_min_oid[1] + 1
+                    inc_oid = diff == source_count
         return RestMetadata(
             url,
             name,
@@ -317,13 +348,15 @@ class RestMetadata:
         print(df_fields.to_string(index=False))
         if self.oid_field is not None:
             print(f"OID Field: {self.oid_field.name}")
+        if self.max_min_oid is not None:
+            print(f"Max, Min OID: {self.max_min_oid}")
+            print(f"Incremental OID?: {self.inc_oid}")
         if self.source_spatial_reference is not None:
             print(f"Source Spatial Reference: {self.source_spatial_reference}")
         if self.output_spatial_reference is not None:
             print(f"Output Spatial Reference: {self.output_spatial_reference}")
 
-    @property
-    def queries(self) -> List[Tuple[str, dict]]:
+    async def queries(self, ssl: bool) -> List[Tuple[str, dict]]:
         """
         Get all the queries for this service. Returns empty list when no query method available
 
@@ -336,13 +369,28 @@ class RestMetadata:
                 (self.query_url, self.get_pagination_query_params(i))
                 for i in range(self.pagination_query_count)
             ]
-        elif self.oid_field:
+        if self.oid_field and self.inc_oid:
             return [
                 (self.query_url, self.get_oid_query_params(i))
                 for i in range(self.oid_query_count)
             ]
-        else:
-            return []
+        if self.oid_field:
+            async with ClientSession() as session:
+                object_ids = await get_all_object_ids(session, self.query_url, ssl)
+            if object_ids is not None:
+                chunk_size = 100 if self.scrape_count > 100 else self.scrape_count
+                return [
+                    (self.query_url, self.object_id_query_params(oids))
+                    for oids in zip_longest(*[iter(object_ids)] * chunk_size)
+                ]
+        return []
+
+    def object_id_query_params(self, object_ids_chunk: List[int]) -> dict:
+        return {
+            "objectids": ",".join((str(oid) for oid in object_ids_chunk)),
+            "outFields": "*",
+            "f": "json",
+        } | self.geo_params
 
     def get_pagination_query_params(self, query_num: int) -> dict:
         """
@@ -364,7 +412,7 @@ class RestMetadata:
         min_oid = self.max_min_oid[1] + (index * self.scrape_count)
         max_oid = min_oid + self.scrape_count - 1
         return {
-            "where": f"{self.oid_field} > {min_oid} and {self.oid_field} < {max_oid}",
+            "where": f"{self.oid_field.name} > {min_oid} and {self.oid_field.name} < {max_oid}",
             "outFields": "*",
             "f": "json",
         } | self.geo_params

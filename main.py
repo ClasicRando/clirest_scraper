@@ -71,7 +71,8 @@ async def main(args: Namespace):
             mkdir("output_files")
         if not Path("temp_files").exists():
             mkdir("temp_files")
-        total_results = len(metadata.queries)
+        queries = await metadata.queries(args.ssl)
+        total_results = len(queries)
         t = tqdm(total=total_results)
         fetch_worker_queue = Queue(args.workers)
         writer_queue = Queue(args.workers)
@@ -89,7 +90,7 @@ async def main(args: Namespace):
         ]
         writer_task = create_task(csv_writer_worker(t, writer_queue, metadata, options))
 
-        for (query, params) in metadata.queries:
+        for (query, params) in queries:
             await fetch_worker_queue.put((query, params))
 
         await fetch_worker_queue.join()
