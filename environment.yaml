@@ -1,0 +1,8 @@
+name: clirest_scraper
+dependencies:
+  - python=3.10
+  - aiohttp
+  - tqdm
+  - pandas
+  - pyarrow
+  - geopandas

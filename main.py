@@ -1,6 +1,6 @@
 import asyncio
 from metadata import RestMetadata
-from scraping import fetch_query, handle_csv_value
+from scraping import fetch_query
 from argparse import ArgumentParser, Namespace
 from tqdm import tqdm
 from pathlib import Path
@@ -8,6 +8,7 @@ from time import time as now
 from sys import platform as sys_platform
 from os import remove as os_remove, mkdir
 from asyncio import Queue, create_task, set_event_loop_policy, run as asyncio_run
+from collecting import OutputWriter
 
 
 async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
@@ -22,32 +23,18 @@ async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
         return
 
 
-async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata, options: dict):
-    output_file = None
+async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata, out_type: str):
     try:
-        output_files_directory = Path("output_files")
-        output_file_path = Path(f"{metadata.name}.csv")
-        output_file = open(
-            output_files_directory.joinpath(output_file_path),
-            encoding="utf8",
-            mode="w",
-            newline="",
-        )
-        header_line = ",".join(
-            (
-                handle_csv_value(column)
-                for column in metadata.columns(options["dates"])
-            )
-        )
-        output_file.write(f"{header_line}\n")
+        output_file = Path("output_files", f"{metadata.name}.{out_type}")
+        if not output_file.exists():
+            output_file.touch()
+        writer = OutputWriter(output_file)
         results_handled = 0
         while True:
             result = await queue.get()
             if isinstance(result, BaseException):
                 raise result
-            with open(result.name, newline="", encoding="utf8") as csv_file:
-                for line in csv_file:
-                    output_file.write(line)
+            writer.write_data(result.name)
             os_remove(result.name)
             results_handled += 1
             queue.task_done()
@@ -55,9 +42,6 @@ async def csv_writer_worker(t: tqdm, queue: Queue, metadata: RestMetadata, optio
     except Exception as ex:
         t.write(f"Encountered an error in the writer worker\n{ex}")
         return
-    finally:
-        if output_file:
-            output_file.close()
 
 
 async def main(args: Namespace):
@@ -74,7 +58,8 @@ async def main(args: Namespace):
         queries = await metadata.queries(args.ssl)
         total_results = len(queries)
         t = tqdm(total=total_results)
-        fetch_worker_queue = Queue(args.workers)
+        fetch_worker_count = args.workers if args.workers <= total_results else total_results
+        fetch_worker_queue = Queue(fetch_worker_count)
         writer_queue = Queue(args.workers)
         start = now()
         options = {
@@ -82,13 +67,13 @@ async def main(args: Namespace):
             "dates": args.dates,
             "tries": args.tries,
             "fields": metadata.fields,
-            "geo_type": metadata.geo_type
+            "geo_type": metadata.geo_type,
         }
         workers = [
             create_task(fetch_worker(t, fetch_worker_queue, writer_queue, options))
-            for _ in range(args.workers)
+            for _ in range(fetch_worker_count)
         ]
-        writer_task = create_task(csv_writer_worker(t, writer_queue, metadata, options))
+        writer_task = create_task(csv_writer_worker(t, writer_queue, metadata, args.out))
 
         for (query, params) in queries:
             await fetch_worker_queue.put((query, params))
@@ -144,6 +129,14 @@ if __name__ == "__main__":
         help="number of workers spawned to perform the HTTP requests (Default: 10)",
         type=int,
         default=10,
+        required=False
+    )
+    parser.add_argument(
+        "--out",
+        help="output file format",
+        type=str,
+        default="csv",
+        choices=["csv", "geojson", "shp", "parquet"],
         required=False
     )
     parser.add_argument(

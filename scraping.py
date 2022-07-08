@@ -1,15 +1,46 @@
 from os import remove as os_remove
 from asyncio import sleep
 from tempfile import NamedTemporaryFile
+from geopandas import GeoDataFrame
 from numpy import format_float_positional
 from typing import Any, List
 from json import dumps
 from aiohttp import ClientSession, ClientConnectorError, ClientError, ClientSSLError
-from metadata import RestField, RestFieldType, RestGeometryType
-from functools import reduce
-from operator import iconcat
+from metadata import RestField, RestFieldType
 from tqdm import tqdm
 from datetime import datetime
+
+
+def epoch_to_utc_timestamp(epoch: float) -> str:
+    return datetime.utcfromtimestamp(epoch/1000).strftime("%Y-%m-%d %H:%M:%S%z")
+
+
+class Feature:
+
+    def __init__(self, feature_dict: dict, fields: List[RestField], dates: bool) -> None:
+        self.type = feature_dict["type"]
+        self.id = feature_dict["id"]
+        self.geometry = feature_dict["geometry"]
+        self.properties = {
+            key: convert_json_value(value)
+            for key, value in feature_dict["properties"].items()
+        }
+        for field in fields:
+            if field.type == RestFieldType.Date and dates:
+                value = self.properties[field.name]
+                if value == "":
+                    self.properties[f"{field.name}_DT"] = ""
+                else:
+                    self.properties[f"{field.name}_DT"] = epoch_to_utc_timestamp(float(value))
+            elif field.is_code:
+                value = self.properties[field.name]
+                self.properties[f"{field.name}_DESC"] = field.codes.get(value, '').strip()
+        self.__geo_interface__ = {
+            "type": self.type,
+            "id": self.id,
+            "geometry": self.geometry,
+            "properties": self.properties,
+        }
 
 
 def convert_json_value(x: Any) -> str:
@@ -41,91 +72,6 @@ def convert_json_value(x: Any) -> str:
     if x is list:
         return dumps(x)
     return str(x)
-
-
-def convert_json_field(x: Any, field: RestField, dates: bool) -> List[str]:
-    value = convert_json_value(x).strip()
-    if field.is_code:
-        return [value, field.codes.get(value, '').strip()]
-    if field.type == RestFieldType.Date and dates:
-        if value == "":
-            return [value, value]
-        return [
-            value,
-            datetime.utcfromtimestamp(float(value)/1000).strftime("%Y-%m-%d %H:%M:%S%z")
-        ]
-    return [value]
-
-
-def handle_record(fields: List[RestField],
-                  geo_type: RestGeometryType,
-                  dates: bool,
-                  feature: dict) -> List[str]:
-    """
-    Parameters
-    ----------
-    fields : List[RestField]
-        service fields to collect feature attributes
-    geo_type : RestGeometryType
-        geometry type from the RestMetadata object
-    dates : bool
-        flag indicating if date fields should be converted to UTC datetime string
-    feature : str
-        json object from the query's feature json array
-    Return
-    ------
-    feature object converted to List[str] with geometry is applicable
-    """
-    attributes = feature["attributes"]
-    # collect all values from the attributes key and convert them to string
-    record = [
-        convert_json_field(attributes[field.name], field=field, dates=dates)
-        for field in fields
-        if field.type != RestFieldType.Geometry
-    ]
-    # If geometry is point, get X and Y and add to the record. If no geometry present, default to a
-    # blank X and Y
-    match geo_type:
-        case RestGeometryType.Point:
-            record += [
-                [convert_json_value(point).strip()]
-                for point in feature.get("geometry", {"x": "", "y": ""}).values()
-            ]
-        # If geometry is multipoint, join coordinates into a list of points using json list notation
-        # and add to the record
-        case RestGeometryType.Multipoint:
-            record += [[convert_json_value(feature["geometry"]["points"]).strip()]]
-        # If geometry is Polyline get the paths and add the value to the record
-        case RestGeometryType.Polyline:
-            record += [[convert_json_value(feature["geometry"]["paths"]).strip()]]
-        # If geometry is Polygon get the rings and add the value to the record
-        case RestGeometryType.Polygon:
-            record += [[convert_json_value(feature["geometry"]["rings"]).strip()]]
-        # If geometry is Envelope get each bound and add the dict to the record
-        case RestGeometryType.Envelope:
-            geometry = feature["geometry"]
-            bounds_map = {}
-            if "xmin" in geometry:
-                bounds_map["xmin"] = geometry["xmin"]
-            if "ymin" in geometry:
-                bounds_map["ymin"] = geometry["ymin"]
-            if "xmax" in geometry:
-                bounds_map["xmax"] = geometry["xmax"]
-            if "ymax" in geometry:
-                bounds_map["ymax"] = geometry["ymax"]
-            if "zmin" in geometry:
-                bounds_map["zmin"] = geometry["zmin"]
-            if "zmax" in geometry:
-                bounds_map["zmax"] = geometry["zmax"]
-            if "mmin" in geometry:
-                bounds_map["mmin"] = geometry["mmin"]
-            if "mmax" in geometry:
-                bounds_map["mmax"] = geometry["mmax"]
-            record += [[convert_json_value(bounds_map).strip()]]
-    return list(reduce(
-        iconcat,
-        record,
-    ))
 
 
 async def check_json_response(response: dict) -> bool:
@@ -167,7 +113,7 @@ async def fetch_query(t: tqdm,
     temp_file = NamedTemporaryFile(
         mode="w",
         encoding="utf8",
-        suffix=".csv",
+        suffix=".feather",
         dir="temp_files",
         delete=False,
         newline="\n"
@@ -196,17 +142,14 @@ async def fetch_query(t: tqdm,
                         invalid_response = True
                 if try_number > options["tries"]:
                     raise Exception(f"Too many tries to fetch query ({query}, {params})")
-            # write all rows to temp csv file using a mapping generator
-            with open(temp_file.name, "w", newline="", encoding="utf8") as csv_file:
-                for feature in json_response["features"]:
-                    record = handle_record(
-                        fields=options["fields"],
-                        geo_type=options["geo_type"],
-                        dates=options["dates"],
-                        feature=feature,
-                    )
-                    line = ",".join([handle_csv_value(value) for value in record]) + "\n"
-                    csv_file.write(line)
+            df = GeoDataFrame.from_features(
+                features=(
+                    Feature(feature, options["fields"], options["dates"])
+                    for feature in json_response["features"]
+                ),
+                crs=json_response["crs"]["properties"]["name"],
+            )
+            df.to_feather(temp_file.name, index=False)
         except ClientSSLError as ex:
             t.write("Client error raised. Issue with the service's SSL certification")
             t.write("To avoid this error you can provide '--ssl false' as a command line argument")

@@ -387,10 +387,10 @@ class RestMetadata:
 
     def object_id_query_params(self, object_ids_chunk: List[int]) -> dict:
         return {
-            "objectids": ",".join((str(oid) for oid in object_ids_chunk)),
-            "outFields": "*",
-            "f": "json",
-        } | self.geo_params
+                   "objectids": ",".join((str(oid) for oid in object_ids_chunk)),
+                   "outFields": "*",
+                   "f": "geojson",
+               } | self.geo_params
 
     def get_pagination_query_params(self, query_num: int) -> dict:
         """
@@ -401,7 +401,7 @@ class RestMetadata:
             "resultOffset": query_num * self.scrape_count,
             "resultRecordCount": self.scrape_count,
             "outFields": "*",
-            "f": "json",
+            "f": "geojson",
         } | self.geo_params
 
     def get_oid_query_params(self, index: int) -> dict:
@@ -414,7 +414,7 @@ class RestMetadata:
         return {
             "where": f"{self.oid_field.name} > {min_oid} and {self.oid_field.name} < {max_oid}",
             "outFields": "*",
-            "f": "json",
+            "f": "geojson",
         } | self.geo_params
 
     def columns(self, dates: bool = False) -> Generator[str, None, None]:
