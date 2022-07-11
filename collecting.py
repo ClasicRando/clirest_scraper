@@ -1,11 +1,33 @@
-from typing import Optional, Any
+from typing import Optional, Any, List
 from geopandas import GeoDataFrame, read_feather, read_parquet, read_file
 from pathlib import Path
+from os import remove as os_remove
 from os.path import abspath
 from pyarrow import Table
 from pyarrow.parquet import ParquetWriter, read_table as read_table_pq
 from pyarrow.feather import read_table as read_table_ft
 from json import loads as json_loads, dumps as json_dumps
+from warnings import catch_warnings, simplefilter
+
+
+shapefile_extensions = ["cpg", "dbf", "prj", "shp", "shx"]
+
+
+def rename_column_shapefile(column_names: List[str]) -> dict:
+    new_names = {}
+    for name in column_names:
+        if len(name) <= 10:
+            continue
+        truncated_name = name[:10]
+        if name[:10] in new_names:
+            new_names[truncated_name].append(name)
+        else:
+            new_names[truncated_name] = [name]
+    return {
+        name: f"{truncated_name[:8]}_{i}" if len(names) > 1 else truncated_name
+        for truncated_name, names in new_names.items()
+        for i, name in enumerate(names)
+    }
 
 
 class OutputWriter:
@@ -17,6 +39,8 @@ class OutputWriter:
         self.output_type = output_path.suffix.upper()
         if self.output_type not in self.__supported_output_types:
             raise Exception(f"Provided an unsupported file type to write, '{self.output_type}'")
+        if self.output_path.exists():
+            os_remove(self.output_path)
         self.schema: Optional[Any] = None
         self.writer: Optional[ParquetWriter] = None
 
@@ -56,12 +80,13 @@ class OutputWriter:
                     mode="a",
                 )
             case ".SHP":
-                df.to_file(
-                    abspath(self.output_path),
-                    driver="ESRI Shapefile",
-                    index=False,
-                    mode="a",
-                )
+                df.rename(columns=rename_column_shapefile(df.columns), inplace=True)
+                with catch_warnings():
+                    simplefilter("ignore")
+                    if self.output_path.exists():
+                        df.to_file(abspath(self.output_path), index=False, mode="a")
+                    else:
+                        df.to_file(abspath(self.output_path), index=False)
             case ".PARQUET":
                 # noinspection PyArgumentList
                 table = Table.from_pandas(df.to_wkb()) if isinstance(df, GeoDataFrame) else df

@@ -8,7 +8,8 @@ from time import time as now
 from sys import platform as sys_platform
 from os import remove as os_remove, mkdir
 from asyncio import Queue, create_task, set_event_loop_policy, run as asyncio_run
-from collecting import OutputWriter
+from collecting import OutputWriter, shapefile_extensions
+from zipfile import ZipFile, ZIP_DEFLATED
 
 
 async def fetch_worker(t: tqdm, queue: Queue, done_queue: Queue, options: dict):
@@ -48,6 +49,9 @@ async def main(args: Namespace):
     metadata = await RestMetadata.from_url(args.url, args.ssl, args.sr)
     proceed = "Y" if args.yes is None else args.yes
     metadata.print_formatted()
+    if args.out == "shp":
+        print("Warning: Column names longer than 10 characters will be truncated when saved to "
+              "ESRI Shapefile.")
     if proceed == "N":
         proceed = input("Proceed with scrape? (y/n)").upper()
     if proceed == "Y":
@@ -87,6 +91,17 @@ async def main(args: Namespace):
         writer_task.cancel()
 
         t.write(f"Scraping done. Took {round(now() - start, 2)} seconds")
+
+        if args.out == "shp":
+            t.write("Zipping Shapefile")
+            zip_path = Path("output_files", f"{metadata.name}.zip")
+            with ZipFile(zip_path, mode="w", compression=ZIP_DEFLATED) as zip_file:
+                for extension in shapefile_extensions:
+                    name = f"{metadata.name}.{extension}"
+                    file_path = Path("output_files", name)
+                    zip_file.write(filename=file_path, arcname=name)
+                    os_remove(file_path)
+
         t.close()
     print("Exiting Program")
 
