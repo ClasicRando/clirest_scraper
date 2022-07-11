@@ -73,12 +73,9 @@ class OutputWriter:
                     mode="a",
                 )
             case ".GEOJSON":
-                df.to_file(
-                    abspath(self.output_path),
-                    driver="GeoJSON",
-                    index=False,
-                    mode="a",
-                )
+                with open(self.output_path, mode="ab") as f:
+                    # noinspection PyTypeChecker
+                    df.to_file(f, driver="GeoJSON", index=False)
             case ".SHP":
                 df.rename(columns=rename_column_shapefile(df.columns), inplace=True)
                 with catch_warnings():
