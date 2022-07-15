@@ -62,6 +62,8 @@ async def main(args: Namespace):
         queries = await metadata.queries(args.ssl)
         total_results = len(queries)
         t = tqdm(total=total_results, leave=False)
+        if args.workers <= 0 or args.workers > 10:
+            args.workers = 10
         fetch_worker_count = args.workers if args.workers <= total_results else total_results
         fetch_worker_queue = Queue(fetch_worker_count)
         writer_queue = Queue(args.workers)
@@ -141,7 +143,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--workers",
         "-w",
-        help="number of workers spawned to perform the HTTP requests (Default: 10)",
+        help="number of workers spawned to perform the HTTP requests (Default/Max: 10)",
         type=int,
         default=10,
         required=False
